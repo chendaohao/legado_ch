@@ -16,10 +16,9 @@ import io.legado.app.utils.readBytes
 import kotlinx.coroutines.runBlocking
 import splitties.init.appCtx
 import java.io.File
-import java.net.URLDecoder
 
 object RemoteBookWebDav : RemoteBookManager() {
-    private val remoteBookUrl get() = "${AppWebDav.rootWebDavUrl}${remoteBookFolder}"
+    val rootBookUrl get() = "${AppWebDav.rootWebDavUrl}${remoteBookFolder}"
 
     init {
         runBlocking {
@@ -29,7 +28,7 @@ object RemoteBookWebDav : RemoteBookManager() {
 
     override suspend fun initRemoteContext() {
         AppWebDav.authorization?.let {
-            WebDav(remoteBookUrl, it).makeAsDir()
+            WebDav(rootBookUrl, it).makeAsDir()
         }
     }
 
@@ -37,38 +36,34 @@ object RemoteBookWebDav : RemoteBookManager() {
      * 获取远程书籍列表
      */
     @Throws(Exception::class)
-    override suspend fun getRemoteBookList(): MutableList<RemoteBook> {
+    override suspend fun getRemoteBookList(path: String): MutableList<RemoteBook> {
         val remoteBooks = mutableListOf<RemoteBook>()
         AppWebDav.authorization?.let {
             //读取文件列表
-            var remoteWebDavFileList: List<WebDavFile>? = null
-            kotlin.runCatching {
-                remoteWebDavFileList = WebDav(remoteBookUrl, it).listFiles()
-            }
-            //逆序文件排序
-            remoteWebDavFileList = remoteWebDavFileList!!.reversed()
+            val remoteWebDavFileList: List<WebDavFile> = WebDav(path, it).listFiles()
             //转化远程文件信息到本地对象
-            remoteWebDavFileList!!.forEach { webDavFile ->
-                var webDavFileName = webDavFile.displayName
-                var webDavUrlName = "${remoteBookUrl}${File.separator}${webDavFile.displayName}"
-                webDavFileName = URLDecoder.decode(webDavFileName,"utf-8")
-                webDavUrlName = URLDecoder.decode(webDavUrlName,"utf-8")
-                // 转码
-                //val trueFileName = String(webDavFileName.toByteArray(Charset.forName("GBK")), Charset.forName("UTF-8"))
-                //val trueUrlName = String(webDavUrlName.toByteArray(Charset.forName("GBK")), Charset.forName("UTF-8"))
-
-                //分割后缀
-                val fileExtension = webDavFileName.substringAfterLast(".")
-
-                //扩展名符合阅读的格式则认为是书籍
-                if (bookFileRegex.matches(webDavFileName)) {
-                    val isOnBookShelf = LocalBook.isOnBookShelf(webDavFileName)
+            remoteWebDavFileList.forEach { webDavFile ->
+                if (webDavFile.isDir) {
                     remoteBooks.add(
                         RemoteBook(
-                            webDavFileName, webDavUrlName, webDavFile.size,
-                            fileExtension, webDavFile.lastModify, isOnBookShelf
+                            webDavFile.displayName, webDavFile.path, webDavFile.size,
+                            "folder", webDavFile.lastModify
                         )
                     )
+                } else {
+                    //分割后缀
+                    val fileExtension = webDavFile.displayName.substringAfterLast(".")
+
+                    //扩展名符合阅读的格式则认为是书籍
+                    if (bookFileRegex.matches(webDavFile.displayName)) {
+                        val isOnBookShelf = LocalBook.isOnBookShelf(webDavFile.displayName)
+                        remoteBooks.add(
+                            RemoteBook(
+                                webDavFile.displayName, webDavFile.path, webDavFile.size,
+                                fileExtension, webDavFile.lastModify, isOnBookShelf
+                            )
+                        )
+                    }
                 }
             }
         } ?: throw NoStackTraceException("webDav没有配置")
@@ -80,7 +75,7 @@ object RemoteBookWebDav : RemoteBookManager() {
      */
     override suspend fun getRemoteBook(remoteBook: RemoteBook): Uri? {
         return AppWebDav.authorization?.let {
-            val webdav = WebDav(remoteBook.urlName, it)
+            val webdav = WebDav(remoteBook.path, it)
             webdav.download().let { bytes ->
                 LocalBook.saveBookFile(bytes, remoteBook.filename)
             }
@@ -94,7 +89,7 @@ object RemoteBookWebDav : RemoteBookManager() {
         if (!NetworkUtils.isAvailable()) return false
 
         val localBookName = localBookUri.path?.substringAfterLast(File.separator)
-        val putUrl = "${remoteBookUrl}${File.separator}${localBookName}"
+        val putUrl = "${rootBookUrl}${File.separator}${localBookName}"
         AppWebDav.authorization?.let {
             if (localBookUri.isContentScheme()) {
                 WebDav(putUrl, it).upload(
@@ -109,7 +104,10 @@ object RemoteBookWebDav : RemoteBookManager() {
     }
 
     override suspend fun delete(remoteBookUrl: String): Boolean {
-        TODO("Not yet implemented")
+        AppWebDav.authorization?.let {
+            return WebDav(remoteBookUrl, it).delete()
+        }
+        return false
     }
 
 }

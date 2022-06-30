@@ -1,8 +1,8 @@
 package io.legado.app.ui.book.remote
 
 import android.app.Application
-import android.net.Uri
 import io.legado.app.base.BaseViewModel
+import io.legado.app.constant.AppLog
 import io.legado.app.model.localBook.LocalBook
 import io.legado.app.ui.book.remote.manager.RemoteBookWebDav
 import io.legado.app.utils.toastOnUi
@@ -13,7 +13,10 @@ import kotlinx.coroutines.flow.flowOn
 import java.util.*
 
 class RemoteBookViewModel(application: Application): BaseViewModel(application){
-    private var dataCallback : DataCallback? = null
+
+    val dirList = arrayListOf<RemoteBook>()
+
+    var dataCallback: DataCallback? = null
 
     val dataFlow = callbackFlow<List<RemoteBook>> {
 
@@ -49,43 +52,38 @@ class RemoteBookViewModel(application: Application): BaseViewModel(application){
         }
     }
 
-    fun loadRemoteBookList() {
+    fun loadRemoteBookList(path: String, loadCallback: (loading: Boolean) -> Unit) {
         execute {
             dataCallback?.clear()
-            val bookList = RemoteBookWebDav.getRemoteBookList()
+            val bookList = RemoteBookWebDav.getRemoteBookList(path)
             dataCallback?.setItems(bookList)
         }.onError {
+            AppLog.put("获取webDav书籍出错\n${it.localizedMessage}", it)
             context.toastOnUi("获取webDav书籍出错\n${it.localizedMessage}")
-        }
-    }
-
-    fun addToBookshelf(uriList: HashSet<String>, finally: () -> Unit) {
-        execute {
-            uriList.forEach {
-                LocalBook.importFile(Uri.parse(it))
-            }
+        }.onStart {
+            loadCallback.invoke(true)
         }.onFinally {
-            finally.invoke()
+            loadCallback.invoke(false)
         }
     }
 
-    /**
-     * 添加书籍到本地书架
-     */
-    fun addToBookshelf(remoteBook: RemoteBook, success: () -> Unit, finally: () -> Unit) {
+    fun addToBookshelf(remoteBooks: HashSet<RemoteBook>, finally: () -> Unit) {
         execute {
-            val downloadBookPath = RemoteBookWebDav.getRemoteBook(remoteBook)
-            downloadBookPath?.let {
-                LocalBook.importFile(it)
+            remoteBooks.forEach { remoteBook ->
+                val downloadBookPath = RemoteBookWebDav.getRemoteBook(remoteBook)
+                downloadBookPath?.let {
+                    LocalBook.importFile(it)
+                    remoteBook.isOnBookShelf = true
+                }
             }
-        }.onSuccess {
-            success.invoke()
         }.onError {
-            context.toastOnUi(it.localizedMessage)
+            AppLog.put("导入出错\n${it.localizedMessage}", it)
+            context.toastOnUi("导入出错\n${it.localizedMessage}")
         }.onFinally {
             finally.invoke()
         }
     }
+
     interface DataCallback {
 
         fun setItems(remoteFiles: List<RemoteBook>)
